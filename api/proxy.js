@@ -13,283 +13,96 @@ let 屏蔽爬虫UA = ['netcraft'];
 
 // 根据主机名选择对应的上游地址
 function routeByHosts(host) {
-    const routes = {
-        "quay": "quay.io",
-        "gcr": "gcr.io",
-        "k8s-gcr": "k8s.gcr.io",
-        "k8s": "registry.k8s.io",
-        "ghcr": "ghcr.io",
-        "cloudsmith": "docker.cloudsmith.io",
-        "nvcr": "nvcr.io",
-        "test": "registry-1.docker.io",
-    };
+	const routes = {
+		"quay": "quay.io",
+		"gcr": "gcr.io",
+		"k8s-gcr": "k8s.gcr.io",
+		"k8s": "registry.k8s.io",
+		"ghcr": "ghcr.io",
+		"cloudsmith": "docker.cloudsmith.io",
+		"nvcr": "nvcr.io",
+		"test": "registry-1.docker.io",
+	};
 
-    if (host in routes) return [routes[host], false];
-    else return [hub_host, true];
+	if (host in routes) return [routes[host], false];
+	else return [hub_host, true];
 }
 
 async function ADD(envadd) {
-    var addtext = envadd.replace(/[\t |"'\r\n]+/g, ',').replace(/,+/g, ',');
-    if (addtext.charAt(0) == ',') addtext = addtext.slice(1);
-    if (addtext.charAt(addtext.length - 1) == ',') addtext = addtext.slice(0, addtext.length - 1);
-    const add = addtext.split(',');
-    return add;
+	var addtext = envadd.replace(/[\t |"'\r\n]+/g, ',').replace(/,+/g, ',');
+	if (addtext.charAt(0) == ',') addtext = addtext.slice(1);
+	if (addtext.charAt(addtext.length - 1) == ',') addtext = addtext.slice(0, addtext.length - 1);
+	const add = addtext.split(',');
+	return add;
 }
 
 module.exports = async (req, res) => {
-    try {
-        const env = process.env;
-        const url = new URL(req.url, `https://${req.headers.host}`);
+	try {
+		const env = process.env;
+		const url = new URL(req.url, `https://${req.headers.host}`);
 
-        const userAgent = (req.headers['user-agent'] || '').toLowerCase();
-        if (env.UA) 屏蔽爬虫UA = 屏蔽爬虫UA.concat(await ADD(env.UA));
+		const userAgent = (req.headers['user-agent'] || '').toLowerCase();
+		if (env.UA) 屏蔽爬虫UA = 屏蔽爬虫UA.concat(await ADD(env.UA));
 
-        const ns = url.searchParams.get('ns');
-        const hostname = url.searchParams.get('hubhost') || req.headers.host;
-        const hostTop = hostname.split('.')[0];
+		const ns = url.searchParams.get('ns');
+		const hostname = url.searchParams.get('hubhost') || req.headers.host;
+		const hostTop = hostname.split('.')[0];
 
-        let checkHost;
-        if (ns) {
-            if (ns === 'docker.io') {
-                hub_host = 'registry-1.docker.io';
-            } else {
-                hub_host = ns;
-            }
-        } else {
-            checkHost = routeByHosts(hostTop);
-            hub_host = checkHost[0];
-        }
+		let checkHost;
+		if (ns) {
+			if (ns === 'docker.io') {
+				hub_host = 'registry-1.docker.io';
+			} else {
+				hub_host = ns;
+			}
+		} else {
+			checkHost = routeByHosts(hostTop);
+			hub_host = checkHost[0];
+		}
 
-        const fakePage = checkHost ? checkHost[1] : false;
+		const fakePage = checkHost ? checkHost[1] : false;
 
-        // 首页处理 - 显示搜索界面
-        if (url.pathname === '/' && userAgent.includes('mozilla')) {
-            if (env.URL302) {
-                res.writeHead(302, { 'Location': env.URL302 });
-                return res.end();
-            }
-            const searchHTML = `<!DOCTYPE html>
+		// 首页处理 - 显示搜索界面
+		if (url.pathname === '/' && userAgent.includes('mozilla')) {
+			if (env.URL302) {
+				res.writeHead(302, { 'Location': env.URL302 });
+				return res.end();
+			}
+			const searchHTML = `<!DOCTYPE html>
 <html>
 <head>
 	<title>Docker Hub 镜像搜索</title>
 	<meta charset="UTF-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1.0">
 	<style>
-	:root {
-		--github-color: rgb(27,86,198);
-		--github-bg-color: #ffffff;
-		--primary-color: #0066ff;
-		--primary-dark: #0052cc;
-		--gradient-start: #1a90ff;
-		--gradient-end: #003eb3;
-		--text-color: #ffffff;
-		--shadow-color: rgba(0,0,0,0.1);
-		--transition-time: 0.3s;
-	}
-	* {
-		box-sizing: border-box;
-		margin: 0;
-		padding: 0;
-	}
-	body {
-		font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-		display: flex;
-		flex-direction: column;
-		justify-content: center;
-		align-items: center;
-		min-height: 100vh;
-		margin: 0;
-		background: linear-gradient(135deg, var(--gradient-start) 0%, var(--gradient-end) 100%);
-		padding: 20px;
-		color: var(--text-color);
-		overflow-x: hidden;
-	}
-	.container {
-		text-align: center;
-		width: 100%;
-		max-width: 800px;
-		padding: 20px;
-		margin: 0 auto;
-		display: flex;
-		flex-direction: column;
-		justify-content: center;
-		min-height: 60vh;
-		animation: fadeIn 0.8s ease-out;
-	}
-	@keyframes fadeIn {
-		from { opacity: 0; transform: translateY(20px); }
-		to { opacity: 1; transform: translateY(0); }
-	}
-	.github-corner {
-		position: fixed;
-		top: 0;
-		right: 0;
-		z-index: 999;
-		transition: transform var(--transition-time) ease;
-	}
-	.github-corner:hover {
-		transform: scale(1.08);
-	}
-	.github-corner svg {
-		fill: var(--github-bg-color);
-		color: var(--github-color);
-		position: absolute;
-		top: 0;
-		border: 0;
-		right: 0;
-		width: 80px;
-		height: 80px;
-		filter: drop-shadow(0 2px 5px rgba(0, 0, 0, 0.2));
-	}
-	.logo {
-		margin-bottom: 20px;
-		transition: transform var(--transition-time) ease;
-		animation: float 6s ease-in-out infinite;
-	}
-	@keyframes float {
-		0%, 100% { transform: translateY(0); }
-		50% { transform: translateY(-10px); }
-	}
-	.logo:hover {
-		transform: scale(1.08) rotate(5deg);
-	}
-	.logo svg {
-		filter: drop-shadow(0 5px 15px rgba(0, 0, 0, 0.2));
-	}
-	.title {
-		color: var(--text-color);
-		font-size: 2.3em;
-		margin-bottom: 10px;
-		text-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
-		font-weight: 700;
-		letter-spacing: -0.5px;
-		animation: slideInFromTop 0.5s ease-out 0.2s both;
-	}
-	@keyframes slideInFromTop {
-		from { opacity: 0; transform: translateY(-20px); }
-		to { opacity: 1; transform: translateY(0); }
-	}
-	.subtitle {
-		color: rgba(255, 255, 255, 0.9);
-		font-size: 1.1em;
-		margin-bottom: 25px;
-		max-width: 600px;
-		margin-left: auto;
-		margin-right: auto;
-		line-height: 1.4;
-		animation: slideInFromTop 0.5s ease-out 0.4s both;
-	}
-	.search-container {
-		display: flex;
-		align-items: stretch;
-		width: 100%;
-		max-width: 600px;
-		margin: 0 auto;
-		height: 55px;
-		position: relative;
-		animation: slideInFromBottom 0.5s ease-out 0.6s both;
-		box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
-		border-radius: 12px;
-		overflow: hidden;
-	}
-	@keyframes slideInFromBottom {
-		from { opacity: 0; transform: translateY(20px); }
-		to { opacity: 1; transform: translateY(0); }
-	}
-	#search-input {
-		flex: 1;
-		padding: 0 20px;
-		font-size: 16px;
-		border: none;
-		outline: none;
-		transition: all var(--transition-time) ease;
-		height: 100%;
-	}
-	#search-input:focus {
-		padding-left: 25px;
-	}
-	#search-button {
-		width: 60px;
-		background-color: var(--primary-color);
-		border: none;
-		cursor: pointer;
-		transition: all var(--transition-time) ease;
-		height: 100%;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		position: relative;
-	}
-	#search-button svg {
-		transition: transform 0.3s ease;
-		stroke: white;
-	}
-	#search-button:hover {
-		background-color: var(--primary-dark);
-	}
-	#search-button:hover svg {
-		transform: translateX(2px);
-	}
-	#search-button:active svg {
-		transform: translateX(4px);
-	}
-	.tips {
-		color: rgba(255, 255, 255, 0.8);
-		margin-top: 20px;
-		font-size: 0.9em;
-		animation: fadeIn 0.5s ease-out 0.8s both;
-		transition: transform var(--transition-time) ease;
-	}
-	.tips:hover {
-		transform: translateY(-2px);
-	}
-	@media (max-width: 768px) {
-		.container {
-			padding: 20px 15px;
-			min-height: 60vh;
-		}
-		.title {
-			font-size: 2em;
-		}
-		.subtitle {
-			font-size: 1em;
-			margin-bottom: 20px;
-		}
-		.search-container {
-			height: 50px;
-		}
-	}
-	@media (max-width: 480px) {
-		.container {
-			padding: 15px 10px;
-			min-height: 60vh;
-		}
-		.github-corner svg {
-			width: 60px;
-			height: 60px;
-		}
-		.search-container {
-			height: 45px;
-		}
-		#search-input {
-			padding: 0 15px;
-		}
-		#search-button {
-			width: 50px;
-		}
-		#search-button svg {
-			width: 18px;
-			height: 18px;
-		}
-		.title {
-			font-size: 1.7em;
-			margin-bottom: 8px;
-		}
-		.subtitle {
-			font-size: 0.95em;
-			margin-bottom: 18px;
-		}
-	}
+	:root {--github-color: rgb(27,86,198);--github-bg-color: #ffffff;--primary-color: #0066ff;--primary-dark: #0052cc;--gradient-start: #1a90ff;--gradient-end: #003eb3;--text-color: #ffffff;--shadow-color: rgba(0,0,0,0.1);--transition-time: 0.3s;}
+	* {box-sizing: border-box;margin: 0;padding: 0;}
+	body {font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;display: flex;flex-direction: column;justify-content: center;align-items: center;min-height: 100vh;margin: 0;background: linear-gradient(135deg, var(--gradient-start) 0%, var(--gradient-end) 100%);padding: 20px;color: var(--text-color);overflow-x: hidden;}
+	.container {text-align: center;width: 100%;max-width: 800px;padding: 20px;margin: 0 auto;display: flex;flex-direction: column;justify-content: center;min-height: 60vh;animation: fadeIn 0.8s ease-out;}
+	@keyframes fadeIn {from { opacity: 0; transform: translateY(20px); }to { opacity: 1; transform: translateY(0); }}
+	.github-corner {position: fixed;top: 0;right: 0;z-index: 999;transition: transform var(--transition-time) ease;}
+	.github-corner:hover {transform: scale(1.08);}
+	.github-corner svg {fill: var(--github-bg-color);color: var(--github-color);position: absolute;top: 0;border: 0;right: 0;width: 80px;height: 80px;filter: drop-shadow(0 2px 5px rgba(0, 0, 0, 0.2));}
+	.logo {margin-bottom: 20px;transition: transform var(--transition-time) ease;animation: float 6s ease-in-out infinite;}
+	@keyframes float {0%, 100% { transform: translateY(0); }50% { transform: translateY(-10px); }}
+	.logo:hover {transform: scale(1.08) rotate(5deg);}
+	.logo svg {filter: drop-shadow(0 5px 15px rgba(0, 0, 0, 0.2));}
+	.title {color: var(--text-color);font-size: 2.3em;margin-bottom: 10px;text-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);font-weight: 700;letter-spacing: -0.5px;animation: slideInFromTop 0.5s ease-out 0.2s both;}
+	@keyframes slideInFromTop {from { opacity: 0; transform: translateY(-20px); }to { opacity: 1; transform: translateY(0); }}
+	.subtitle {color: rgba(255, 255, 255, 0.9);font-size: 1.1em;margin-bottom: 25px;max-width: 600px;margin-left: auto;margin-right: auto;line-height: 1.4;animation: slideInFromTop 0.5s ease-out 0.4s both;}
+	.search-container {display: flex;align-items: stretch;width: 100%;max-width: 600px;margin: 0 auto;height: 55px;position: relative;animation: slideInFromBottom 0.5s ease-out 0.6s both;box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);border-radius: 12px;overflow: hidden;}
+	@keyframes slideInFromBottom {from { opacity: 0; transform: translateY(20px); }to { opacity: 1; transform: translateY(0); }}
+	#search-input {flex: 1;padding: 0 20px;font-size: 16px;border: none;outline: none;transition: all var(--transition-time) ease;height: 100%;}
+	#search-input:focus {padding-left: 25px;}
+	#search-button {width: 60px;background-color: var(--primary-color);border: none;cursor: pointer;transition: all var(--transition-time) ease;height: 100%;display: flex;align-items: center;justify-content: center;position: relative;}
+	#search-button svg {transition: transform 0.3s ease;stroke: white;}
+	#search-button:hover {background-color: var(--primary-dark);}
+	#search-button:hover svg {transform: translateX(2px);}
+	#search-button:active svg {transform: translateX(4px);}
+	.tips {color: rgba(255, 255, 255, 0.8);margin-top: 20px;font-size: 0.9em;animation: fadeIn 0.5s ease-out 0.8s both;transition: transform var(--transition-time) ease;}
+	.tips:hover {transform: translateY(-2px);}
+	@media (max-width: 768px) {.container {padding: 20px 15px;min-height: 60vh;}.title {font-size: 2em;}.subtitle {font-size: 1em;margin-bottom: 20px;}.search-container {height: 50px;}}
+	@media (max-width: 480px) {.container {padding: 15px 10px;min-height: 60vh;}.github-corner svg {width: 60px;height: 60px;}.search-container {height: 45px;}#search-input {padding: 0 15px;}#search-button {width: 50px;}#search-button svg {width: 18px;height: 18px;}.title {font-size: 1.7em;margin-bottom: 8px;}.subtitle {font-size: 0.95em;margin-bottom: 18px;}}
 	</style>
 </head>
 <body>
@@ -323,7 +136,7 @@ module.exports = async (req, res) => {
 	function performSearch() {
 		const query = document.getElementById('search-input').value;
 		if (query) {
-			window.location.href = 'https://hub.docker.com/search?q=' + encodeURIComponent(query);
+			window.location.href = '/search?q=' + encodeURIComponent(query);
 		}
 	}
 	document.getElementById('search-button').addEventListener('click', performSearch);
@@ -338,80 +151,132 @@ module.exports = async (req, res) => {
 	</script>
 </body>
 </html>`;
-            res.writeHead(200, { 'Content-Type': 'text/html; charset=UTF-8' });
-            return res.end(searchHTML);
-        }
+			res.writeHead(200, { 'Content-Type': 'text/html; charset=UTF-8' });
+			return res.end(searchHTML);
+		}
 
-        // 处理 token 请求
-        if (url.pathname.includes('/token')) {
-            const tokenUrl = `${auth_url}${url.pathname}${url.search}`;
-            const tokenRes = await fetch(tokenUrl, {
-                headers: {
-                    'User-Agent': req.headers['user-agent'] || '',
-                    'Accept': req.headers['accept'] || '*/*',
-                }
-            });
-            const tokenData = await tokenRes.text();
-            res.writeHead(tokenRes.status, {
-                'Content-Type': tokenRes.headers.get('content-type') || 'application/json',
-            });
-            return res.end(tokenData);
-        }
+		// 处理浏览器访问的其他页面 (如搜索页面) - 代理到 hub.docker.com
+		const hubParams = ['/v1/search', '/v1/repositories'];
+		if ((userAgent.includes('mozilla') && url.pathname !== '/') || hubParams.some(param => url.pathname.includes(param))) {
+			let proxyHost = 'hub.docker.com';
 
-        // 构造上游请求 URL
-        const upstreamUrl = `https://${hub_host}${url.pathname}${url.search}`;
+			// /v1/ 路径特殊处理
+			if (url.pathname.startsWith('/v1/')) {
+				proxyHost = 'index.docker.io';
+			}
 
-        // 使用 Node.js 原生 https 模块来保证 Content-Length 正确传递
-        const upstreamReq = https.request(upstreamUrl, {
-            method: req.method,
-            headers: {
-                'Host': hub_host,
-                'User-Agent': req.headers['user-agent'] || 'Docker-Client',
-                'Accept': req.headers['accept'] || '*/*',
-                'Accept-Encoding': 'identity', // 强制不压缩
-                'Authorization': req.headers['authorization'] || '',
-                'Connection': 'keep-alive',
-            }
-        }, (upstreamRes) => {
-            // 复制响应头,确保 Content-Length 被保留
-            const responseHeaders = {};
-            Object.keys(upstreamRes.headers).forEach(key => {
-                if (key.toLowerCase() !== 'transfer-encoding') { // 移除 transfer-encoding
-                    responseHeaders[key] = upstreamRes.headers[key];
-                }
-            });
+			// 处理搜索参数中的 library/
+			if (url.searchParams.get('q')?.includes('library/') && url.searchParams.get('q') !== 'library/') {
+				const search = url.searchParams.get('q');
+				url.searchParams.set('q', search.replace('library/', ''));
+			}
 
-            // 确保 Content-Length 存在
-            if (upstreamRes.headers['content-length']) {
-                responseHeaders['Content-Length'] = upstreamRes.headers['content-length'];
-            }
+			const proxyUrl = `https://${proxyHost}${url.pathname}${url.search}`;
 
-            // 添加 CORS 头
-            responseHeaders['Access-Control-Allow-Origin'] = '*';
-            responseHeaders['Access-Control-Expose-Headers'] = '*';
+			const proxyReq = https.request(proxyUrl, {
+				method: req.method,
+				headers: {
+					'Host': proxyHost,
+					'User-Agent': req.headers['user-agent'] || 'Mozilla/5.0',
+					'Accept': req.headers['accept'] || 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+					'Accept-Language': req.headers['accept-language'] || 'en-US,en;q=0.5',
+					'Accept-Encoding': 'gzip, deflate, br',
+					'Connection': 'keep-alive',
+				}
+			}, (proxyRes) => {
+				const responseHeaders = {};
+				Object.keys(proxyRes.headers).forEach(key => {
+					responseHeaders[key] = proxyRes.headers[key];
+				});
 
-            res.writeHead(upstreamRes.statusCode, responseHeaders);
+				res.writeHead(proxyRes.statusCode, responseHeaders);
+				proxyRes.pipe(res);
+			});
 
-            // 直接管道传输,不做任何处理
-            upstreamRes.pipe(res);
-        });
+			proxyReq.on('error', (error) => {
+				console.error('Proxy error:', error);
+				res.writeHead(500, { 'Content-Type': 'text/plain' });
+				res.end('Proxy error: ' + error.message);
+			});
 
-        upstreamReq.on('error', (error) => {
-            console.error('Upstream request error:', error);
-            res.writeHead(500, { 'Content-Type': 'text/plain' });
-            res.end('Proxy error: ' + error.message);
-        });
+			if (req.method !== 'GET' && req.method !== 'HEAD') {
+				req.pipe(proxyReq);
+			} else {
+				proxyReq.end();
+			}
+			return;
+		}
 
-        // 如果有请求体,传递给上游
-        if (req.method !== 'GET' && req.method !== 'HEAD') {
-            req.pipe(upstreamReq);
-        } else {
-            upstreamReq.end();
-        }
+		// 处理 token 请求
+		if (url.pathname.includes('/token')) {
+			const tokenUrl = `${auth_url}${url.pathname}${url.search}`;
+			const tokenRes = await fetch(tokenUrl, {
+				headers: {
+					'User-Agent': req.headers['user-agent'] || '',
+					'Accept': req.headers['accept'] || '*/*',
+				}
+			});
+			const tokenData = await tokenRes.text();
+			res.writeHead(tokenRes.status, {
+				'Content-Type': tokenRes.headers.get('content-type') || 'application/json',
+			});
+			return res.end(tokenData);
+		}
 
-    } catch (error) {
-        console.error('Handler error:', error);
-        res.writeHead(500, { 'Content-Type': 'text/plain' });
-        res.end('Internal server error: ' + error.message);
-    }
+		// 构造上游请求 URL - Docker registry API
+		const upstreamUrl = `https://${hub_host}${url.pathname}${url.search}`;
+
+		// 使用 Node.js 原生 https 模块来保证 Content-Length 正确传递
+		const upstreamReq = https.request(upstreamUrl, {
+			method: req.method,
+			headers: {
+				'Host': hub_host,
+				'User-Agent': req.headers['user-agent'] || 'Docker-Client',
+				'Accept': req.headers['accept'] || '*/*',
+				'Accept-Encoding': 'identity', // 强制不压缩
+				'Authorization': req.headers['authorization'] || '',
+				'Connection': 'keep-alive',
+			}
+		}, (upstreamRes) => {
+			// 复制响应头,确保 Content-Length 被保留
+			const responseHeaders = {};
+			Object.keys(upstreamRes.headers).forEach(key => {
+				if (key.toLowerCase() !== 'transfer-encoding') { // 移除 transfer-encoding
+					responseHeaders[key] = upstreamRes.headers[key];
+				}
+			});
+
+			// 确保 Content-Length 存在
+			if (upstreamRes.headers['content-length']) {
+				responseHeaders['Content-Length'] = upstreamRes.headers['content-length'];
+			}
+
+			// 添加 CORS 头
+			responseHeaders['Access-Control-Allow-Origin'] = '*';
+			responseHeaders['Access-Control-Expose-Headers'] = '*';
+
+			res.writeHead(upstreamRes.statusCode, responseHeaders);
+
+			// 直接管道传输,不做任何处理
+			upstreamRes.pipe(res);
+		});
+
+		upstreamReq.on('error', (error) => {
+			console.error('Upstream request error:', error);
+			res.writeHead(500, { 'Content-Type': 'text/plain' });
+			res.end('Proxy error: ' + error.message);
+		});
+
+		// 如果有请求体,传递给上游
+		if (req.method !== 'GET' && req.method !== 'HEAD') {
+			req.pipe(upstreamReq);
+		} else {
+			upstreamReq.end();
+		}
+
+	} catch (error) {
+		console.error('Handler error:', error);
+		res.writeHead(500, { 'Content-Type': 'text/plain' });
+		res.end('Internal server error: ' + error.message);
+	}
 };
