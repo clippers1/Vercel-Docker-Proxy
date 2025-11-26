@@ -3,6 +3,7 @@
 
 const https = require('https');
 const http = require('http');
+const zlib = require('zlib');
 
 // Docker镜像仓库主机地址
 let hub_host = 'registry-1.docker.io';
@@ -160,12 +161,10 @@ module.exports = async (req, res) => {
 		if ((userAgent.includes('mozilla') && url.pathname !== '/') || hubParams.some(param => url.pathname.includes(param))) {
 			let proxyHost = 'hub.docker.com';
 
-			// /v1/ 路径特殊处理
 			if (url.pathname.startsWith('/v1/')) {
 				proxyHost = 'index.docker.io';
 			}
 
-			// 处理搜索参数中的 library/
 			if (url.searchParams.get('q')?.includes('library/') && url.searchParams.get('q') !== 'library/') {
 				const search = url.searchParams.get('q');
 				url.searchParams.set('q', search.replace('library/', ''));
@@ -184,13 +183,65 @@ module.exports = async (req, res) => {
 					'Connection': 'keep-alive',
 				}
 			}, (proxyRes) => {
-				const responseHeaders = {};
-				Object.keys(proxyRes.headers).forEach(key => {
-					responseHeaders[key] = proxyRes.headers[key];
-				});
+				const contentType = proxyRes.headers['content-type'] || '';
+				const isHTML = contentType.includes('text/html');
+				const encoding = proxyRes.headers['content-encoding'];
 
-				res.writeHead(proxyRes.statusCode, responseHeaders);
-				proxyRes.pipe(res);
+				if (isHTML) {
+					let chunks = [];
+					let stream = proxyRes;
+
+					if (encoding === 'gzip') {
+						stream = proxyRes.pipe(zlib.createGunzip());
+					} else if (encoding === 'deflate') {
+						stream = proxyRes.pipe(zlib.createInflate());
+					} else if (encoding === 'br') {
+						stream = proxyRes.pipe(zlib.createBrotliDecompress());
+					}
+
+					stream.on('data', chunk => chunks.push(chunk));
+					stream.on('end', () => {
+						let html = Buffer.concat(chunks).toString('utf-8');
+
+						const currentHost = req.headers.host;
+
+						// 1. 替换已经有 namespace 的镜像 (如 username/image:tag)
+						html = html.replace(/docker pull ([a-zA-Z0-9\-_.]+\/[a-zA-Z0-9\-_.]+:[a-zA-Z0-9\-_.]+)/g, `docker pull ${currentHost}/$1`);
+						html = html.replace(/docker pull ([a-zA-Z0-9\-_.]+\/[a-zA-Z0-9\-_.]+)(?![:\w])/g, `docker pull ${currentHost}/$1`);
+
+						// 2. 替换官方镜像 (无 namespace,需要添加 library/)
+						html = html.replace(/docker pull ([a-zA-Z0-9\-_.]+:[a-zA-Z0-9\-_.]+)(?!\w)/g, (match, image) => {
+							if (!image.includes('/')) {
+								return `docker pull ${currentHost}/library/${image}`;
+							}
+							return match;
+						});
+						html = html.replace(/docker pull ([a-zA-Z0-9\-_.]+)(?![:\w\/])/g, (match, image) => {
+							if (!image.includes('/')) {
+								return `docker pull ${currentHost}/library/${image}`;
+							}
+							return match;
+						});
+
+						const responseHeaders = {};
+						Object.keys(proxyRes.headers).forEach(key => {
+							if (key !== 'content-encoding' && key !== 'content-length') {
+								responseHeaders[key] = proxyRes.headers[key];
+							}
+						});
+						responseHeaders['content-length'] = Buffer.byteLength(html);
+
+						res.writeHead(proxyRes.statusCode, responseHeaders);
+						res.end(html);
+					});
+				} else {
+					const responseHeaders = {};
+					Object.keys(proxyRes.headers).forEach(key => {
+						responseHeaders[key] = proxyRes.headers[key];
+					});
+					res.writeHead(proxyRes.statusCode, responseHeaders);
+					proxyRes.pipe(res);
+				}
 			});
 
 			proxyReq.on('error', (error) => {
@@ -226,38 +277,32 @@ module.exports = async (req, res) => {
 		// 构造上游请求 URL - Docker registry API
 		const upstreamUrl = `https://${hub_host}${url.pathname}${url.search}`;
 
-		// 使用 Node.js 原生 https 模块来保证 Content-Length 正确传递
 		const upstreamReq = https.request(upstreamUrl, {
 			method: req.method,
 			headers: {
 				'Host': hub_host,
 				'User-Agent': req.headers['user-agent'] || 'Docker-Client',
 				'Accept': req.headers['accept'] || '*/*',
-				'Accept-Encoding': 'identity', // 强制不压缩
+				'Accept-Encoding': 'identity',
 				'Authorization': req.headers['authorization'] || '',
 				'Connection': 'keep-alive',
 			}
 		}, (upstreamRes) => {
-			// 复制响应头,确保 Content-Length 被保留
 			const responseHeaders = {};
 			Object.keys(upstreamRes.headers).forEach(key => {
-				if (key.toLowerCase() !== 'transfer-encoding') { // 移除 transfer-encoding
+				if (key.toLowerCase() !== 'transfer-encoding') {
 					responseHeaders[key] = upstreamRes.headers[key];
 				}
 			});
 
-			// 确保 Content-Length 存在
 			if (upstreamRes.headers['content-length']) {
 				responseHeaders['Content-Length'] = upstreamRes.headers['content-length'];
 			}
 
-			// 添加 CORS 头
 			responseHeaders['Access-Control-Allow-Origin'] = '*';
 			responseHeaders['Access-Control-Expose-Headers'] = '*';
 
 			res.writeHead(upstreamRes.statusCode, responseHeaders);
-
-			// 直接管道传输,不做任何处理
 			upstreamRes.pipe(res);
 		});
 
@@ -267,7 +312,6 @@ module.exports = async (req, res) => {
 			res.end('Proxy error: ' + error.message);
 		});
 
-		// 如果有请求体,传递给上游
 		if (req.method !== 'GET' && req.method !== 'HEAD') {
 			req.pipe(upstreamReq);
 		} else {
